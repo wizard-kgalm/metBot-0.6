@@ -547,42 +547,143 @@ class dAmn
 	}
 
 	//function parse($data, $sep = '=', $addraw=true)
+	function send_headers( $socket, $host, $url, $referer, $post = null, $cookies = array( ) )
+	{
+		try
+		{
+			$headers = "";
+			if( isset( $post ) )
+				$headers .= "POST {$url} HTTP/1.1\r\n";
+			else $headers .= "GET {$url} HTTP/1.1\r\n";
+			$headers .= "Host: {$host}\r\n";
+			$headers .= "User-Agent: Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.2.28) Gecko/20120306 Firefox/3.6.28 ( .NET CLR 3.5.30729; .NET4.0C)\r\n";
+			$headers .= "Referer: {$referer}\r\n";
+			if( $cookies != array( ) )
+				$headers .= "Cookie: " . implode( "; ", $cookies ) . "\r\n";
+			$headers .= "Connection: close\r\n";
+			$headers .= "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*\/*;q=0.8\r\n";
+			$headers .= "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n";
+			$headers .= "Content-Type: application/x-www-form-urlencoded\r\n";
+			if( isset( $post ) )
+				$headers .= "Content-Length: " . strlen( $post ) . "\r\n\r\n{$post}";
+			else $headers .= "\r\n";
+			$response = "";
+			fputs( $socket, $headers );
+			while( !feof( $socket ) ) $response .= fgets ( $socket, 8192 );
+			return $response;
+		}
+		catch( Exception $e )
+		{
+			echo "Exception occured: " . $e->getMessage() . "\n";
+			return "";
+		}
+	}
 
 	function getAuthtoken($username, $password) // grab the bot's authtoken
 	{
-		$socket = @fsockopen ("ssl://www.deviantart.com", 443);
-		if ($socket == false)
-		{
-			$this->bot->Console->msg("Could not open socket to deviantart.com, using last retrieved authtoken...", "");
-			$a = array('pk' => $this->bot->oldpk, 'cookie' => $this->bot->oldcookie);
-		}
-		$POST = "ref=https%3A%2F%2Fwww.deviantart.com%2Fusers%2Floggedin&username=$username&password=$password&reusetoken=1";
-		fputs ($socket, "POST /users/login HTTP/1.1\n");
-		fputs ($socket, "Host: www.deviantart.com\n");
-		fputs ($socket, "User-Agent: metBot\n");
-		fputs ($socket, "Accept: text/html\n");
-		fputs ($socket, "Cookie: skipintro=1\n");
-		fputs ($socket, "Content-Type: application/x-www-form-urlencoded\n");
-		fputs ($socket, "Content-Length: " . strlen ($POST) . "\n\n" . $POST);
-		$response = "";
-		while (!feof ($socket)) $response .= fgets ($socket, 8192);
-		fclose ($socket);
-		$return = array();
-		if(!empty($response))
-		{
-			$response = urldecode(substr($response, 0, 500));
-			$response = substr($response, strpos($response, '=')+1);
-			$cookie = substr($response, 0, strpos($response, ';};')+2);
-			$array = unserialize($cookie);
-			if (is_array($array))
-			{
-				$token = $array['authtoken'];
-				$this->bot->Console->msg(GREEN."Woot, we have the authtoken!".NORM);
-				$return['cookie'] = $cookie;
-				$return['token'] = $token;
+		// Method to get the cookie! Yeah! :D
+		// Our first job is to open an SSL connection with our host.
+		$socket = fsockopen( "ssl://www.deviantart.com", 443 );
+		// If we didn't manage that, we need to exit!
+		if( $socket === false ) {
+			return array(
+				'status' => 2,
+				'error' => 'Could not open an internet connection'
+			);
+		}//ref=https%3A%2F%2Fwww.deviantart.com%2Fusers%2Floggedin&username=sparkling-anubis&password=broken&remember_me=1&validate_token=0314f93b0bca1f43c29b&validate_key=1413449988
+		// Fill up the form payload
+		$POST  = 'ref=https%3A%2F%2Fwww.deviantart.com%2Fusers%2Floggedin&username='.urlencode( strtolower( $username ) );
+		$POST .= '&password='.urlencode( $password );
+		$POST .= '&remember_me=1';
+		// And now we send our header and post data and retrieve the response.
+		//$page = file_get_contents( "https://www.deviantart.com/users/login" );
+		$page = $this->send_headers(
+			fsockopen( "ssl://www.deviantart.com", 443 ),
+			"www.deviantart.com",
+			"/users/login",
+			"http://www.deviantart.com/users/rockedout"
+		);
+	//	$config->df['testlogin']['page1'] = $page;
+		//fclose( $socket );
+		$response2 = explode( "\r\n", $page );
+		$cookie_jar2 = array();
+		foreach ( $response2 as $line ) {
+			if ( strpos( $line, "Set-Cookie:" ) !== false ) {
+				$cookie_jar2[] = substr( $line, 12, strpos( $line, "; " ) -12 );
 			}
 		}
-		return $return;
+		preg_match( "/name=\"validate_token\" value=\"(.*)\"/Ums", $page, $matches1 );
+		preg_match( "/name=\"validate_key\" value=\"(.*)\"/Ums"  , $page, $matches2 );
+		//echo $matches1[0]. " ". $matches2[0];
+		$POST .= "&validate_token={$matches1[1]}&validate_key={$matches2[1]}";
+		//$socket2 = fsockopen( "ssl://www.deviantart.com", 443 );
+		$response2 = $this->send_headers(
+			fsockopen( "ssl://www.deviantart.com", 443 ),
+			"www.deviantart.com",
+			"/users/login",
+			"http://www.deviantart.com/users/rockedout",
+			$POST,
+			$cookie_jar2
+		);
+		// And now we do the normal stuff, like checking if the response was empty or not.
+		if( empty( $response2 ) ) {
+			return array(
+				'status' => 3,
+				'error' => 'No response returned from the server'
+			);
+		}		
+		if( stripos( $response2, 'set-cookie' ) === false ) {
+			return array(
+				'status' => 4,
+				'error' => 'No cookie returned'
+			);
+		}
+		// Grab the cookies from the header
+		$response2 = explode( "\r\n", $response2 );
+		
+		$cookie_jar = array();
+		foreach ( $response2 as $line ) {
+			if ( strpos( $line, "Set-Cookie:" ) !== false ) {
+				$cookie_jar[] = substr( $line, 12, strpos( $line, "; " ) -12 );
+			}
+		}
+		$test = urldecode( $cookie_jar[3] );
+		if( stripos( $test, strtolower( $username ) ) === false ) {
+			return array( // It returns a cookie even if your login info is bad, it's just an empty session. We don't want a useless cookie.
+				'status' => 5,
+				'error' => 'Login failed, bad pass?'
+			);
+		}
+			$response2 = $this->send_headers(
+				fsockopen( "ssl://www.deviantart.com", 443 ),
+				"chat.deviantart.com",
+				"/chat/Botdom",
+				"http://chat.deviantart.com",
+				null,
+				$cookie_jar
+			);
+			// Now search for the authtoken in the response
+			$cookie = array();
+			$cookie['cookie'] = $cookie_jar;
+			if( ( $pos = strpos( $response2, "dAmn_Login( ") ) !== false ){
+				$response2 = substr( $response2, $pos + 12 );
+				//echo "\n". substr( $response2, strpos( $response2, "\", " ) + 4, 32 ) ."\n";
+				$cookie['token']   = substr( $response2, strpos( $response2, "\", " ) + 4, 32 );
+			}else{ 
+				return array(
+					'status' => 6,
+					'error' => 'No authtoken found in dAmn client.'
+				);
+			}		  
+			// Because errors still happen, we need to make sure we now have an array!
+			if( !$cookie ){
+				return array(
+					'status' => 5,
+					'error' => 'Malformed cookie returned.'
+				);
+			}
+
+			return $cookie;
 	}
 
 	function login($username, $token) // log in to dAmn
